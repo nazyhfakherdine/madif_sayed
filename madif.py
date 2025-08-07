@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import json
 
 # إعداد الصفحة
 st.set_page_config(page_title="نظام تسجيل القجات", layout="wide")
@@ -9,10 +10,8 @@ st.title("🧾 نظام تسجيل القجات")
 
 # إعداد الاتصال مع Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-import json
 creds_dict = json.loads(st.secrets["GOOGLE_SHEETS_JSON"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-
 client = gspread.authorize(creds)
 
 SHEET_NAME = "donation_data"
@@ -112,8 +111,10 @@ if filtered_data.empty:
     st.info("لا توجد بيانات مطابقة.")
 else:
     for i in range(len(filtered_data)):
-        row = filtered_data.iloc[i]
-        original_index = data[data["اسم المحل"] == row["اسم المحل"]].index[0]  # للحصول على index الأصلي
+        row = filtered_data.iloc[i]  # ✅ هذا السطر كان ناقص
+        row_id = filtered_data.index[i]
+        unique_key = f"{row_id}_{i}"  # مفتاح فريد
+
         cols = st.columns((2, 2, 1, 1, 3, 1, 1))
 
         cols[0].markdown(f"**{row['اسم المحل']}**")
@@ -122,12 +123,12 @@ else:
         cols[3].markdown(f"{row['المبلغ']:,}")
         cols[4].markdown(row["ملاحظات"] or "-")
 
-        if cols[5].button("✏️ تعديل", key=f"edit_{original_index}"):
-            st.session_state.edit_index = original_index
+        if cols[5].button("✏️ تعديل", key=f"edit_{unique_key}"):
+            st.session_state.edit_index = row_id
             st.rerun()
 
-        if cols[6].button("🗑️ حذف", key=f"delete_{original_index}"):
-            st.session_state.delete_index = original_index
+        if cols[6].button("🗑️ حذف", key=f"delete_{unique_key}"):
+            st.session_state.delete_index = row_id
 
 # ---- تأكيد الحذف ----
 if st.session_state.delete_index is not None:
