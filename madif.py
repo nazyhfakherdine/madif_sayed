@@ -1,146 +1,103 @@
 import streamlit as st
+import sqlite3
 import pandas as pd
-import gspread
-from oauth2client.service_account import ServiceAccountCredentials
-import json
 
-# إعداد الصفحة
-st.set_page_config(page_title="نظام تسجيل القجات", layout="wide")
-st.title("🧾 نظام تسجيل القجات")
+DB_FILE = "donations.db"
 
-# إعداد الاتصال مع Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(st.secrets["GOOGLE_SHEETS_JSON"])
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
+# ---------- قاعدة البيانات ----------
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        CREATE TABLE IF NOT EXISTS donations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            store_name TEXT,
+            location TEXT,
+            collected TEXT,
+            amount REAL,
+            notes TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
 
-SHEET_NAME = "donation_data"
-sheet = client.open(SHEET_NAME).sheet1
+def add_donation(store_name, location, collected, amount, notes):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("INSERT INTO donations (store_name, location, collected, amount, notes) VALUES (?, ?, ?, ?, ?)",
+              (store_name, location, collected, amount, notes))
+    conn.commit()
+    conn.close()
 
-# تحميل البيانات من الشيت
-def load_data():
-    data = sheet.get_all_records()
-    return pd.DataFrame(data)
+def get_donations():
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql_query("SELECT * FROM donations", conn)
+    conn.close()
+    return df
 
-# حفظ البيانات إلى الشيت
-def save_data(df):
-    sheet.clear()
-    sheet.insert_row(["اسم المحل", "الموقع", "تم السحب", "المبلغ", "ملاحظات"], 1)
-    for row in df.values.tolist():
-        sheet.append_row(row)
+def update_donation(record_id, store_name, location, collected, amount, notes):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""UPDATE donations SET store_name=?, location=?, collected=?, amount=?, notes=? WHERE id=?""",
+              (store_name, location, collected, amount, notes, record_id))
+    conn.commit()
+    conn.close()
 
-# تحميل البيانات الحالية
-data = load_data()
+def delete_donation(record_id):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("DELETE FROM donations WHERE id=?", (record_id,))
+    conn.commit()
+    conn.close()
 
-# تخزين رقم الصف المراد تعديله أو حذفه
-if "edit_index" not in st.session_state:
-    st.session_state.edit_index = None
-if "delete_index" not in st.session_state:
-    st.session_state.delete_index = None
+# ---------- تهيئة ----------
+init_db()
+st.set_page_config(page_title="سجل القجج", layout="centered")
+st.title("📦 سجل القجج - المضيف")
 
-# ---- النموذج ----
-with st.form("donation_form", clear_on_submit=True):
-    st.subheader("📝 إضافة / تعديل قجة")
+# ---------- إضافة ----------
+with st.form("add_form"):
+    st.subheader("➕ إضافة قجة جديدة")
+    col1, col2 = st.columns(2)
+    store_name = col1.text_input("اسم المحل")
+    location = col2.text_input("الموقع")
+    collected = col1.selectbox("هل سُحبت القجة؟", ["لا", "نعم"])
+    amount = col2.number_input("قيمة المبلغ بالقجة", min_value=0.0, step=1.0)
+    notes = st.text_area("ملاحظات")
+    submit = st.form_submit_button("إضافة")
 
-    if st.session_state.edit_index is not None:
-        row_data = data.iloc[st.session_state.edit_index]
-        shop_name = st.text_input("اسم المحل", value=row_data["اسم المحل"])
-        location = st.text_input("الموقع", value=row_data["الموقع"])
-        collected = st.selectbox("هل تم سحب القجة؟", ["لا", "نعم"], index=1 if row_data["تم السحب"] == "نعم" else 0)
-        amount = st.number_input("قيمة المبلغ (ل.ل)", min_value=0, step=1000, value=int(row_data["المبلغ"]))
-        notes = st.text_area("ملاحظات", value=row_data["ملاحظات"])
-    else:
-        shop_name = st.text_input("اسم المحل")
-        location = st.text_input("الموقع")
-        collected = st.selectbox("هل تم سحب القجة؟", ["لا", "نعم"])
-        amount = st.number_input("قيمة المبلغ (ل.ل)", min_value=0, step=1000)
-        notes = st.text_area("ملاحظات")
+if submit and store_name:
+    add_donation(store_name, location, collected, amount, notes)
+    st.success("✅ تمت الإضافة بنجاح")
 
-    submit_btn = st.form_submit_button("💾 حفظ")
-
-    if submit_btn:
-        if not shop_name or not location:
-            st.warning("يرجى إدخال اسم المحل والموقع.")
-        else:
-            new_data = {
-                "اسم المحل": shop_name,
-                "الموقع": location,
-                "تم السحب": collected,
-                "المبلغ": amount,
-                "ملاحظات": notes
-            }
-
-            if st.session_state.edit_index is not None:
-                data.iloc[st.session_state.edit_index] = new_data
-                st.session_state.edit_index = None
-                st.success("✅ تم تحديث البيانات.")
-            else:
-                data = pd.concat([data, pd.DataFrame([new_data])], ignore_index=True)
-                st.success("✅ تم حفظ البيانات.")
-
-            save_data(data)
-            st.rerun()
-
-# ---- واجهة البحث والترتيب ----
-st.subheader("🔎 بحث وترتيب")
-
-search_query = st.text_input("🔍 ابحث باسم المحل:")
-filter_collected = st.selectbox("🗂️ فلترة حسب حالة القجة", ["الكل", "نعم", "لا"])
-sort_order = st.radio("↕️ ترتيب حسب المبلغ", ["بدون ترتيب", "تصاعدي", "تنازلي"], horizontal=True)
-
-filtered_data = data.copy()
-
-# تطبيق البحث
-if search_query:
-    filtered_data = filtered_data[filtered_data["اسم المحل"].str.contains(search_query, case=False, na=False)]
-
-# تطبيق الفلترة
-if filter_collected != "الكل":
-    filtered_data = filtered_data[filtered_data["تم السحب"] == filter_collected]
-
-# تطبيق الترتيب
-if sort_order == "تصاعدي":
-    filtered_data = filtered_data.sort_values(by="المبلغ", ascending=True)
-elif sort_order == "تنازلي":
-    filtered_data = filtered_data.sort_values(by="المبلغ", ascending=False)
-
-# ---- عرض البيانات ----
-st.subheader("📊 قائمة القجات")
-
-if filtered_data.empty:
-    st.info("لا توجد بيانات مطابقة.")
+# ---------- عرض ----------
+st.subheader("📋 قائمة القجج")
+df = get_donations()
+if df.empty:
+    st.info("لا توجد بيانات بعد.")
 else:
-    for i in range(len(filtered_data)):
-        row = filtered_data.iloc[i]  # ✅ هذا السطر كان ناقص
-        row_id = filtered_data.index[i]
-        unique_key = f"{row_id}_{i}"  # مفتاح فريد
+    st.dataframe(df)
 
-        cols = st.columns((2, 2, 1, 1, 3, 1, 1))
+# ---------- تعديل ----------
+if not df.empty:
+    st.subheader("✏ تعديل بيانات")
+    record_id = st.selectbox("اختر السجل للتعديل", df["id"])
+    record = df[df["id"] == record_id].iloc[0]
 
-        cols[0].markdown(f"**{row['اسم المحل']}**")
-        cols[1].markdown(row["الموقع"])
-        cols[2].markdown(row["تم السحب"])
-        cols[3].markdown(f"{row['المبلغ']:,}")
-        cols[4].markdown(row["ملاحظات"] or "-")
+    new_store = st.text_input("اسم المحل", record["store_name"])
+    new_location = st.text_input("الموقع", record["location"])
+    new_collected = st.selectbox("هل سُحبت القجة؟", ["لا", "نعم"], index=["لا", "نعم"].index(record["collected"]))
+    new_amount = st.number_input("قيمة المبلغ بالقجة", value=float(record["amount"]), step=1.0)
+    new_notes = st.text_area("ملاحظات", record["notes"])
 
-        if cols[5].button("✏️ تعديل", key=f"edit_{unique_key}"):
-            st.session_state.edit_index = row_id
-            st.rerun()
+    if st.button("💾 حفظ التعديلات"):
+        update_donation(record_id, new_store, new_location, new_collected, new_amount, new_notes)
+        st.success("✅ تم التعديل بنجاح")
 
-        if cols[6].button("🗑️ حذف", key=f"delete_{unique_key}"):
-            st.session_state.delete_index = row_id
-
-# ---- تأكيد الحذف ----
-if st.session_state.delete_index is not None:
-    with st.expander("⚠️ تأكيد الحذف", expanded=True):
-        st.error("هل أنت متأكد أنك تريد حذف هذا السجل؟ لا يمكن التراجع بعد الحذف.")
-        confirm_col1, confirm_col2 = st.columns(2)
-        if confirm_col1.button("✅ نعم، احذف", key="confirm_delete"):
-            data = data.drop(index=st.session_state.delete_index).reset_index(drop=True)
-            save_data(data)
-            st.session_state.delete_index = None
-            st.success("🗑️ تم حذف السجل.")
-            st.rerun()
-        if confirm_col2.button("❌ إلغاء", key="cancel_delete"):
-            st.session_state.delete_index = None
-            st.info("تم إلغاء الحذف.")
+# ---------- حذف ----------
+if not df.empty:
+    st.subheader("🗑 حذف بيانات")
+    delete_id = st.selectbox("اختر السجل للحذف", df["id"], key="delete")
+    if st.button("🚨 تأكيد الحذف"):
+        delete_donation(delete_id)
+        st.warning("❌ تم حذف السجل")
